@@ -6,12 +6,10 @@ import nest_asyncio
 import streamlit as st
 from dotenv import load_dotenv
 
-embeddings = GoogleGenerativeAIEmbeddings(api_key=os.environ["GOOGLE_API_KEY"])
-
+# Import all required modules first
 from PyPDF2 import PdfReader
 import pytesseract
 from pdf2image import convert_from_bytes
-
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores.faiss import FAISS
@@ -182,18 +180,49 @@ def split_text(text: str):
 
 
 def build_vectorstore(chunks):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    return FAISS.from_texts(texts=chunks, embedding=embeddings)
+    """Build vector store with proper API key handling."""
+    try:
+        # Get API key from environment or Streamlit secrets
+        api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+        
+        if not api_key:
+            st.error("Google API key not found. Please set GOOGLE_API_KEY in your environment variables or Streamlit secrets.")
+            return None
+            
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=api_key
+        )
+        return FAISS.from_texts(texts=chunks, embedding=embeddings)
+    except Exception as e:
+        st.error(f"Error creating vector store: {str(e)}")
+        return None
 
 
 def build_conversation_chain(vectorstore):
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        memory=memory
-    )
+    """Build conversation chain with proper API key handling."""
+    try:
+        # Get API key from environment or Streamlit secrets
+        api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+        
+        if not api_key:
+            st.error("Google API key not found.")
+            return None
+            
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash", 
+            temperature=0.3,
+            google_api_key=api_key
+        )
+        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+        return ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=vectorstore.as_retriever(),
+            memory=memory
+        )
+    except Exception as e:
+        st.error(f"Error creating conversation chain: {str(e)}")
+        return None
 
 
 # =======================
@@ -225,6 +254,24 @@ def ask_question(query: str):
 def main():
     load_dotenv()
     st.set_page_config(page_title="Chat with multiple PDFs", page_icon="📄")
+
+    # Check API key at startup
+    api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+    if not api_key:
+        st.error("🔑 Google API key not found! Please set GOOGLE_API_KEY in your environment variables or Streamlit secrets.")
+        st.info("""
+        **To fix this:**
+        
+        **For local development:**
+        1. Create a `.env` file with: `GOOGLE_API_KEY=your_key_here`
+        
+        **For Streamlit Cloud:**
+        1. Go to app settings → Secrets
+        2. Add: `GOOGLE_API_KEY = "your_key_here"`
+        
+        **Get API key:** Visit [Google AI Studio](https://aistudio.google.com/)
+        """)
+        return
 
     # Render CSS
     st.markdown(CSS, unsafe_allow_html=True)
@@ -278,7 +325,14 @@ def main():
                     return
 
                 vectorstore = build_vectorstore(chunks)
-                st.session_state.conversation = build_conversation_chain(vectorstore)
+                if not vectorstore:
+                    return
+                    
+                conversation_chain = build_conversation_chain(vectorstore)
+                if not conversation_chain:
+                    return
+                    
+                st.session_state.conversation = conversation_chain
 
             st.success("✅ PDF berhasil diproses!" + (" (menggunakan OCR)" if used_ocr else ""))
 
