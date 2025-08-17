@@ -1,6 +1,10 @@
 streamlit
 langchain>=0.1.70
 faiss-cpu
+langchain>=0.3.27
+langchain-community
+faiss-cpu
+streamlit
 
 streamlit>=1.25.0
 nest-asyncio>=1.5.6
