@@ -13,6 +13,9 @@ Klik Process
 Pilih salah satu pertanyaan rekomendasi atau ketik pertanyaanmu
 Made by @helmyyoga
 
+https://llm-chat-3rqhkxudutqhvcdhxhcbvs.streamlit.app/
+
+
 
 ![alt text](https://i.imgur.com/ZqnigFP.png)
 
