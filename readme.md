@@ -13,4 +13,7 @@ Pilih salah satu pertanyaan rekomendasi atau ketik pertanyaanmu
 Made by @helmyyoga
 
 
-![Uploading Screenshot 2025-08-17 at 19.31.40.png…]()
+![alt text](https://i.imgur.com/ZqnigFP.png)
+
+
+
