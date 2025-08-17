@@ -151,17 +151,29 @@ def get_all_text(files_bytes):
     """
     combined = ""
     used_ocr = False
+    total_files = len(files_bytes)
 
-    for name, data in files_bytes:
+    for idx, (name, data) in enumerate(files_bytes):
+        # Update progress for multi-file processing
+        if total_files > 1:
+            file_progress = st.empty()
+            file_progress.text(f"📄 Memproses file {idx + 1}/{total_files}: {name}")
+        
         t = extract_text_from_pdf_bytes(data)
         if not t.strip():
             # fallback OCR
+            if total_files > 1:
+                file_progress.text(f"🔍 OCR pada file {idx + 1}/{total_files}: {name}")
             ocr_t = ocr_text_from_pdf_bytes(data, langs="eng")  # tambahkan "ind" jika perlu: "eng+ind"
             if ocr_t.strip():
                 used_ocr = True
                 combined += ocr_t + "\n"
         else:
             combined += t + "\n"
+        
+        # Clear file progress indicator
+        if total_files > 1:
+            file_progress.empty()
 
     return combined.strip(), used_ocr
 
@@ -182,6 +194,10 @@ def split_text(text: str):
 def build_vectorstore(chunks):
     """Build vector store with proper API key handling."""
     try:
+        # Show chunk information
+        chunk_info = st.empty()
+        chunk_info.text(f"📊 Memproses {len(chunks)} potongan teks...")
+        
         # Get API key from environment or Streamlit secrets
         api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
         
@@ -193,7 +209,14 @@ def build_vectorstore(chunks):
             model="models/embedding-001",
             google_api_key=api_key
         )
-        return FAISS.from_texts(texts=chunks, embedding=embeddings)
+        
+        # Create vector store
+        vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
+        
+        # Clear chunk info
+        chunk_info.empty()
+        
+        return vectorstore
     except Exception as e:
         st.error(f"Error creating vector store: {str(e)}")
         return None
@@ -235,17 +258,55 @@ def render_bot(msg: str):
     st.write(BOT_TMPL.replace("{{MSG}}", msg), unsafe_allow_html=True)
 
 def ask_question(query: str):
-    """Kirim pertanyaan ke chain, render ke UI."""
+    """Kirim pertanyaan ke chain, render ke UI dengan progress bar."""
     if not st.session_state.get("conversation"):
         st.warning("Proses dulu PDF kamu sebelum bertanya.")
         return
-    response = st.session_state.conversation({"question": query})
-    st.session_state.chat_history = response.get("chat_history", [])
-    render_user(query)
-    # ambil jawaban terakhir dari bot
-    if st.session_state.chat_history:
-        bot_msg = st.session_state.chat_history[-1].content
-        render_bot(bot_msg)
+    
+    # Progress bar untuk proses tanya jawab
+    qa_progress = st.progress(0)
+    qa_status = st.empty()
+    
+    try:
+        # Step 1: Menampilkan pertanyaan user
+        qa_status.text("💭 Memproses pertanyaan...")
+        qa_progress.progress(20)
+        render_user(query)
+        
+        # Step 2: Mencari dokumen yang relevan
+        qa_status.text("🔍 Mencari informasi relevan dalam dokumen...")
+        qa_progress.progress(40)
+        
+        # Step 3: Menganalisis dengan AI
+        qa_status.text("🤖 AI sedang menganalisis dan menyiapkan jawaban...")
+        qa_progress.progress(70)
+        
+        # Step 4: Mendapatkan response dari conversation chain
+        response = st.session_state.conversation({"question": query})
+        st.session_state.chat_history = response.get("chat_history", [])
+        
+        # Step 5: Menampilkan jawaban
+        qa_status.text("✅ Menyiapkan jawaban...")
+        qa_progress.progress(90)
+        
+        # ambil jawaban terakhir dari bot
+        if st.session_state.chat_history:
+            bot_msg = st.session_state.chat_history[-1].content
+            render_bot(bot_msg)
+        
+        # Complete
+        qa_progress.progress(100)
+        
+        # Clear progress indicators
+        import time
+        time.sleep(0.5)
+        qa_progress.empty()
+        qa_status.empty()
+        
+    except Exception as e:
+        qa_progress.empty()
+        qa_status.empty()
+        st.error(f"❌ Terjadi kesalahan saat memproses pertanyaan: {str(e)}")
 
 
 # =======================
@@ -311,28 +372,65 @@ def main():
         if not uploaded:
             st.error("Silakan upload minimal 1 PDF dulu.")
         else:
-            with st.spinner("Processing PDF..."):
-                files_bytes = read_pdfs_to_bytes(uploaded)
-                full_text, used_ocr = get_all_text(files_bytes)
+            # Progress bar setup
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Step 1: Reading PDFs
+            status_text.text("📄 Membaca file PDF...")
+            progress_bar.progress(10)
+            files_bytes = read_pdfs_to_bytes(uploaded)
+            
+            # Step 2: Extracting text
+            status_text.text("🔍 Mengekstrak teks dari PDF...")
+            progress_bar.progress(25)
+            full_text, used_ocr = get_all_text(files_bytes)
 
-                if not full_text.strip():
-                    st.error("❌ Tidak ada teks yang bisa diekstrak dari PDF (bahkan dengan OCR).")
-                    return
+            if not full_text.strip():
+                st.error("❌ Tidak ada teks yang bisa diekstrak dari PDF (bahkan dengan OCR).")
+                progress_bar.empty()
+                status_text.empty()
+                return
 
-                chunks = split_text(full_text)
-                if not chunks:
-                    st.error("❌ Tidak ada potongan teks yang valid setelah proses splitting.")
-                    return
+            # Step 3: Splitting text
+            status_text.text("✂️ Memotong teks menjadi bagian-bagian...")
+            progress_bar.progress(40)
+            chunks = split_text(full_text)
+            if not chunks:
+                st.error("❌ Tidak ada potongan teks yang valid setelah proses splitting.")
+                progress_bar.empty()
+                status_text.empty()
+                return
 
-                vectorstore = build_vectorstore(chunks)
-                if not vectorstore:
-                    return
-                    
-                conversation_chain = build_conversation_chain(vectorstore)
-                if not conversation_chain:
-                    return
-                    
-                st.session_state.conversation = conversation_chain
+            # Step 4: Creating embeddings
+            status_text.text("🧠 Membuat embeddings dengan AI...")
+            progress_bar.progress(60)
+            vectorstore = build_vectorstore(chunks)
+            if not vectorstore:
+                progress_bar.empty()
+                status_text.empty()
+                return
+                
+            # Step 5: Building conversation chain
+            status_text.text("🔗 Menyiapkan conversation chain...")
+            progress_bar.progress(80)
+            conversation_chain = build_conversation_chain(vectorstore)
+            if not conversation_chain:
+                progress_bar.empty()
+                status_text.empty()
+                return
+                
+            st.session_state.conversation = conversation_chain
+            
+            # Step 6: Complete
+            status_text.text("✅ Selesai! PDF siap digunakan.")
+            progress_bar.progress(100)
+            
+            # Clear progress indicators after a brief pause
+            import time
+            time.sleep(1)
+            progress_bar.empty()
+            status_text.empty()
 
             st.success("✅ PDF berhasil diproses!" + (" (menggunakan OCR)" if used_ocr else ""))
 
@@ -352,25 +450,32 @@ def main():
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 if st.button("Ringkas dokumen"):
-                    ask_question("Ringkas isi dokumen ini secara singkat dan terstruktur.")
+                    with st.spinner("🤖 Sedang meringkas dokumen..."):
+                        ask_question("Ringkas isi dokumen ini secara singkat dan terstruktur.")
             with col2:
                 if st.button("Poin penting"):
-                    ask_question("Apa saja poin-poin penting dari dokumen ini? Buat bullet points.")
+                    with st.spinner("🔍 Mencari poin-poin penting..."):
+                        ask_question("Apa saja poin-poin penting dari dokumen ini? Buat bullet points.")
             with col3:
                 if st.button("Angka & tanggal"):
-                    ask_question("Sebutkan angka, tanggal, atau metrik penting beserta konteksnya.")
+                    with st.spinner("📊 Menganalisis data numerik..."):
+                        ask_question("Sebutkan angka, tanggal, atau metrik penting beserta konteksnya.")
             with col4:
                 if st.button("Nama & entitas"):
-                    ask_question("Sebutkan nama orang, organisasi, lokasi, atau entitas penting yang disebutkan.")
+                    with st.spinner("👤 Mengidentifikasi entitas..."):
+                        ask_question("Sebutkan nama orang, organisasi, lokasi, atau entitas penting yang disebutkan.")
             with col5:
                 if st.button("Kesimpulan"):
-                    ask_question("Apa kesimpulan utama dokumen ini? Sertakan rekomendasi bila ada.")
+                    with st.spinner("📝 Menyimpulkan dokumen..."):
+                        ask_question("Apa kesimpulan utama dokumen ini? Sertakan rekomendasi bila ada.")
 
     # Free-form Q&A setelah sudah ada conversation
     if st.session_state.conversation:
         user_q = st.text_input("❓ Pertanyaanmu tentang PDF")
         if user_q:
-            ask_question(user_q)
+            # Show processing indicator for manual questions
+            with st.spinner("🤖 Memproses pertanyaan kamu..."):
+                ask_question(user_q)
 
 
 if __name__ == "__main__":
